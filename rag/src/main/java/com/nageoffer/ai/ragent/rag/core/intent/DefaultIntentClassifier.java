@@ -19,6 +19,7 @@ package com.nageoffer.ai.ragent.rag.core.intent;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.map.MapBuilder;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.google.gson.JsonArray;
@@ -234,9 +235,10 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                     question,
                     JSONUtil.toJsonPrettyStr(
                             scores.stream().map(ns ->
-                                    Map.of("id", ns.getNode().getId(),
-                                            "score", ns.getScore(),
-                                            "path", ns.getNode().getFullPath())
+                                    MapBuilder.<String,Object>create(true).
+                                            put("id", ns.getNode().getId()).
+                                            put("score", ns.getScore()).
+                                            put("path", ns.getNode().getFullPath())
                             ).toList()
                     )
             );
