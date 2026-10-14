@@ -239,6 +239,7 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                                             put("id", ns.getNode().getId()).
                                             put("score", ns.getScore()).
                                             put("path", ns.getNode().getFullPath())
+                                            .build()
                             ).toList()
                     )
             );
