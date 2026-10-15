@@ -234,13 +234,11 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
             log.info("当前问题：{}\n意图识别树如下所示：{}\n",
                     question,
                     JSONUtil.toJsonPrettyStr(
-                            scores.stream().map(ns ->
-                                    MapBuilder.<String,Object>create(true).
-                                            put("id", ns.getNode().getId()).
-                                            put("score", ns.getScore()).
-                                            put("path", ns.getNode().getFullPath())
-                                            .build()
-                            ).toList()
+                            scores.stream().map(ns -> MapBuilder.<String, Object>create(true)
+                                    .put("id", ns.getNode().getId())
+                                    .put("path", ns.getNode().getFullPath())
+                                    .put("score", ns.getScore())
+                                    .build()).toList()
                     )
             );
             return scores;
