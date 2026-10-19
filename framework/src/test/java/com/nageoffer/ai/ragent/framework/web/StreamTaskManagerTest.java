@@ -30,6 +30,8 @@ import org.redisson.api.RedissonClient;
 import org.redisson.api.listener.MessageListener;
 
 import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -202,6 +204,55 @@ class StreamTaskManagerTest {
 
         assertThat(taskManager.isCancelled(TASK_ID)).isFalse();
         assertThat(cancelled.get()).isZero();
+    }
+
+    /**
+     * register 回看 Redis 标记与取消广播落到本节点是两条独立触发路径，可能同时跑
+     * 收尾要补发终止事件并落库，跑两遍就是重复推送与重复入库
+     */
+    @Test
+    void shouldRunFinalizerOnlyOnceWhenRegisterRacesWithBroadcastCancel() throws Exception {
+        AtomicInteger finalized = new AtomicInteger();
+
+        // register 窗口里唯一耗时的是这次 Redis 读，挂住它就能稳定地把广播插进窗口
+        CountDownLatch reviewStarted = new CountDownLatch(1);
+        CountDownLatch releaseReview = new CountDownLatch(1);
+        when(cancelBucket.get()).thenAnswer(invocation -> {
+            reviewStarted.countDown();
+            assertThat(releaseReview.await(5, TimeUnit.SECONDS)).isTrue();
+            return OWNER_ID;
+        });
+
+        Thread registering = new Thread(() -> taskManager.register(TASK_ID, OWNER_ID, finalized::incrementAndGet));
+        registering.start();
+        try {
+            assertThat(reviewStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            // 此刻 register 还没落地，广播已经跑完一轮收尾
+            captureListener().onMessage(CANCEL_TOPIC, TASK_ID + "|" + OWNER_ID);
+            assertThat(finalized.get()).isOne();
+        } finally {
+            releaseReview.countDown();
+            registering.join(5000);
+        }
+
+        assertThat(finalized.get()).isOne();
+    }
+
+    @Test
+    void shouldRunFinalizerEvenWhenCancelActionThrows() {
+        AtomicInteger finalized = new AtomicInteger();
+        taskManager.register(TASK_ID, OWNER_ID, finalized::incrementAndGet);
+        taskManager.bindHandle(TASK_ID, () -> {
+            throw new IllegalStateException("打断上游失败");
+        });
+
+        try {
+            taskManager.cancel(TASK_ID);
+        } catch (IllegalStateException expected) {
+            // 打断失败的异常照旧外抛，但收尾不能跟着一起丢
+        }
+
+        assertThat(finalized.get()).isOne();
     }
 
     /**

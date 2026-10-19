@@ -113,7 +113,7 @@ public class StreamTaskManager {
             owner.set(ownerUserId, CANCEL_TTL);
         }
         if (isTaskCancelledInRedis(taskId, taskInfo)) {
-            onCancelFinalizer.run();
+            runFinalizerOnce(taskId, taskInfo);
         }
     }
 
@@ -223,13 +223,15 @@ public class StreamTaskManager {
             return;
         }
 
-        if (taskInfo.cancelAction != null) {
-            taskInfo.cancelAction.run();
-        }
-
-        // 在取消时执行收尾回调，保存已累积的内容
-        if (taskInfo.finalizer != null) {
-            taskInfo.finalizer.run();
+        // 打断动作失败不能让收尾就此落空，否则前端收不到终止事件、已生成内容也留不下
+        try {
+            if (taskInfo.cancelAction != null) {
+                taskInfo.cancelAction.run();
+            }
+        } finally {
+            if (taskInfo.finalizer != null) {
+                runFinalizerOnce(taskId, taskInfo);
+            }
         }
     }
 
@@ -240,6 +242,18 @@ public class StreamTaskManager {
         // 清理Redis
         redissonClient.getBucket(cancelKey(taskId)).deleteAsync();
         redissonClient.getBucket(ownerKey(taskId)).deleteAsync();
+    }
+
+    /**
+     * 收尾回调只跑一次
+     * register侧 和 cancel侧 因时序问题 会导致收尾回调重复执行 -> 两次重复的SSE事件推送
+     */
+    private void runFinalizerOnce(String taskId, StreamTaskInfo taskInfo) {
+        if (!taskInfo.finalizerRan.compareAndSet(false, true)) {
+            log.info("流式任务收尾已执行过，忽略重复触发，taskId：{}", taskId);
+            return;
+        }
+        taskInfo.finalizer.run();
     }
 
     private String cancelKey(String taskId) {
@@ -257,6 +271,7 @@ public class StreamTaskManager {
 
     private static final class StreamTaskInfo {
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
+        private final AtomicBoolean finalizerRan = new AtomicBoolean(false);
         private volatile String ownerUserId;
         private volatile Runnable cancelAction;
         private volatile Runnable finalizer;
